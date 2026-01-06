@@ -1,0 +1,37 @@
+# =========================
+# Streamlit / Secrets
+# =========================
+.streamlit/secrets.toml
+
+# =========================
+# Data (se regeneran)
+# =========================
+data_raw/
+data_processed/
+*.parquet
+*.csv
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.pyc
+
+# =========================
+# Entornos
+# =========================
+.env
+.venv/
+venv/
+
+# =========================
+# Notebooks temporales
+# =========================
+*.ipynb_checkpoints
+
+# =========================
+# Editor / OS
+# =========================
+.DS_Store
+.vscode/
+marginales.ipynb
