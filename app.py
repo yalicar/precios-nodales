@@ -52,7 +52,8 @@ ROOT = Path(__file__).resolve().parent
 def load_data():
     prices = pd.read_parquet(ROOT / "data_processed" / "precios_nodales_clean.parquet")
     quality = pd.read_parquet(ROOT / "data_processed" / "node_quality.parquet")
-    nodes = pd.read_csv(ROOT / "data_processed" / "nodes_real.csv")
+    nodes = pd.read_csv(ROOT / "data_static" / "nodes_real.csv")
+
 
     df = (
         prices

@@ -9,7 +9,7 @@
 data_raw/
 data_processed/
 *.parquet
-*.csv
+data_processed/*.csv
 
 # =========================
 # Python
