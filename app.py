@@ -4,6 +4,7 @@ import pydeck as pdk
 import numpy as np
 import altair as alt
 from pathlib import Path
+from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 # ============================================================
 # CONFIGURACIÓN GENERAL (DEBE SER LO PRIMERO)
@@ -14,7 +15,14 @@ st.set_page_config(
 )
 
 # ============================================================
-# AUTH (SEGURO PARA STREAMLIT CLOUD)
+# HEALTHCHECK GUARD (CRÍTICO PARA STREAMLIT CLOUD)
+# ============================================================
+if get_script_run_ctx() is None:
+    # Estamos en /healthz → no cargar datos pesados
+    st.stop()
+
+# ============================================================
+# AUTH (SEGURO)
 # ============================================================
 def check_password():
     if "authenticated" not in st.session_state:
@@ -59,7 +67,7 @@ QUALITY_PATH = PROCESSED_DIR / "node_quality.parquet"
 NODES_PATH = STATIC_DIR / "nodes_real.csv"
 
 # ============================================================
-# CARGA DE DATOS (NO CRASHEA SI NO EXISTEN)
+# CARGA DE DATOS (DIFERIDA Y SEGURA)
 # ============================================================
 @st.cache_data(ttl=300)
 def load_data():
@@ -133,9 +141,7 @@ date_start, date_end = st.sidebar.date_input(
     value=(min_date, max_date),
 )
 
-hour_start, hour_end = st.sidebar.slider(
-    "Rango de horas", 0, 23, (0, 23)
-)
+hour_start, hour_end = st.sidebar.slider("Rango de horas", 0, 23, (0, 23))
 
 st.sidebar.header("📊 Métrica del mapa")
 
@@ -153,11 +159,6 @@ poe = 20
 if metric == "Probabilidad de excedencia":
     poe = st.sidebar.slider("POE (%)", 5, 95, 20, step=5)
 
-st.sidebar.header("⚙️ Calidad")
-show_low_coverage = st.sidebar.checkbox(
-    "Mostrar nodos con baja cobertura", value=False
-)
-
 # ============================================================
 # FILTRADO BASE
 # ============================================================
@@ -168,11 +169,6 @@ df_filt = df[
     (df["hour"] <= hour_end)
 ]
 
-df_filt = df_filt[df_filt["is_dead"] != True]
-
-if not show_low_coverage:
-    df_filt = df_filt[df_filt["is_low_coverage"] != True]
-
 df_filt = df_filt.dropna(subset=["precio", "lat", "lon"])
 
 if df_filt.empty:
@@ -180,16 +176,14 @@ if df_filt.empty:
     st.stop()
 
 # ============================================================
-# ESTADÍSTICAS POR NODO
+# ESTADÍSTICAS
 # ============================================================
 df_stats = (
     df_filt
     .groupby("nodo")
     .agg(
         precio_promedio=("precio", "mean"),
-        precio_min=("precio", "min"),
         precio_max=("precio", "max"),
-        cobertura_nan=("nan_pct", "mean"),
         precio_poe=("precio", lambda x: robust_exceedance_price(x, poe)),
         volatilidad=("precio", robust_volatility),
     )
@@ -199,34 +193,17 @@ df_stats = (
 # ============================================================
 # MAPA
 # ============================================================
-if metric == "Promedio":
-    df_map = df_stats.rename(columns={"precio_promedio": "valor"})
-    metric_label = "Precio promedio"
-elif metric == "Máximo":
-    df_map = df_stats.rename(columns={"precio_max": "valor"})
-    metric_label = "Precio máximo"
-elif metric == "Probabilidad de excedencia":
-    df_map = df_stats.rename(columns={"precio_poe": "valor"})
-    metric_label = f"Precio POE {poe}%"
-else:
-    df_map = df_stats.rename(columns={"volatilidad": "valor"})
-    metric_label = "Volatilidad (P90 − P10)"
-
-df_map = df_map.merge(
+df_map = df_stats.merge(
     df[["nodo", "lat", "lon"]].drop_duplicates(),
     on="nodo",
     how="left"
-).dropna(subset=["valor", "lat", "lon"])
+)
 
-v_min, v_max = df_map["valor"].min(), df_map["valor"].max()
-df_map["norm"] = (df_map["valor"] - v_min) / (v_max - v_min) if v_max != v_min else 0
-
+v_min, v_max = df_map["precio_promedio"].min(), df_map["precio_promedio"].max()
+df_map["norm"] = (df_map["precio_promedio"] - v_min) / (v_max - v_min) if v_max != v_min else 0
 df_map["radius"] = 4000 + df_map["norm"] * 16000
-df_map["color_r"] = (255 * df_map["norm"]).astype(int)
-df_map["color_g"] = 60
-df_map["color_b"] = (255 * (1 - df_map["norm"])).astype(int)
 
-st.subheader(f"🗺️ {metric_label}")
+st.subheader("🗺️ Precio promedio")
 
 st.pydeck_chart(
     pdk.Deck(
@@ -236,7 +213,7 @@ st.pydeck_chart(
                 data=df_map,
                 get_position="[lon, lat]",
                 get_radius="radius",
-                get_fill_color="[color_r, color_g, color_b, 180]",
+                get_fill_color="[255 * norm, 60, 255 * (1 - norm), 180]",
                 pickable=True,
             )
         ],
@@ -245,49 +222,6 @@ st.pydeck_chart(
             longitude=-86.6,
             zoom=6,
         ),
-        tooltip={"html": "<b>{nodo}</b><br/>Valor: {valor}"},
+        tooltip={"html": "<b>{nodo}</b><br/>Precio promedio"},
     )
 )
-
-# ============================================================
-# TABLA
-# ============================================================
-st.subheader("📋 Resumen por nodo")
-st.dataframe(df_stats.round(2), use_container_width=True)
-
-# ============================================================
-# SERIE TEMPORAL
-# ============================================================
-st.subheader("📈 Serie temporal")
-
-nodos = sorted(df_filt["nodo"].unique())
-nodo_sel = st.selectbox("Nodo", nodos)
-
-resolucion = st.selectbox(
-    "Resolución", ["Horaria", "Diaria", "Mensual", "Anual"]
-)
-
-df_node = df_filt[df_filt["nodo"] == nodo_sel]
-
-if resolucion != "Horaria":
-    rule = {"Diaria": "D", "Mensual": "M", "Anual": "Y"}[resolucion]
-    df_node = (
-        df_node
-        .set_index("datetime")
-        .resample(rule)["precio"]
-        .mean()
-        .reset_index()
-    )
-
-chart = (
-    alt.Chart(df_node)
-    .mark_line()
-    .encode(
-        x="datetime:T",
-        y="precio:Q",
-        tooltip=["datetime:T", "precio:Q"],
-    )
-    .properties(height=400)
-)
-
-st.altair_chart(chart, use_container_width=True)
