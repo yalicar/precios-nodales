@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 # ============================================================
-# AUTH
+# AUTH (SEGURO PARA STREAMLIT CLOUD)
 # ============================================================
 def check_password():
     if "authenticated" not in st.session_state:
@@ -24,10 +24,16 @@ def check_password():
         return True
 
     st.title("🔐 Acceso restringido")
+
+    APP_PASSWORD = st.secrets.get("APP_PASSWORD")
+    if APP_PASSWORD is None:
+        st.error("❌ Falta configurar APP_PASSWORD en los secrets de Streamlit Cloud")
+        st.stop()
+
     password = st.text_input("Ingrese contraseña", type="password")
 
     if password:
-        if password == st.secrets["APP_PASSWORD"]:
+        if password == APP_PASSWORD:
             st.session_state.authenticated = True
             st.rerun()
         else:
@@ -53,13 +59,13 @@ QUALITY_PATH = PROCESSED_DIR / "node_quality.parquet"
 NODES_PATH = STATIC_DIR / "nodes_real.csv"
 
 # ============================================================
-# CARGA DE DATOS (SEGURA PARA CLOUD)
+# CARGA DE DATOS (NO CRASHEA SI NO EXISTEN)
 # ============================================================
 @st.cache_data(ttl=300)
 def load_data():
     missing = [p for p in [PRICES_PATH, QUALITY_PATH, NODES_PATH] if not p.exists()]
     if missing:
-        return None, missing
+        return None
 
     prices = pd.read_parquet(PRICES_PATH)
     quality = pd.read_parquet(QUALITY_PATH)
@@ -77,23 +83,23 @@ def load_data():
     df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
     df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
 
-    return df, None
+    return df
 
 
-df, missing = load_data()
+df = load_data()
 
 if df is None:
     st.warning("⚠️ Datos aún no generados")
-    st.markdown("""
-    Esta aplicación necesita que el pipeline se ejecute al menos una vez.
+    st.markdown(
+        """
+        Esta aplicación necesita que el pipeline se ejecute al menos una vez.
 
-    **Pasos:**
-    1. Ve a **Actualizar Datos**
-    2. Sube el archivo Excel
-    3. Ejecuta el pipeline
-
-    Luego regresa a esta vista.
-    """)
+        **Pasos:**
+        1. Ve a **Actualizar Datos**
+        2. Sube el archivo Excel
+        3. Ejecuta el pipeline
+        """
+    )
     st.stop()
 
 # ============================================================
@@ -127,7 +133,9 @@ date_start, date_end = st.sidebar.date_input(
     value=(min_date, max_date),
 )
 
-hour_start, hour_end = st.sidebar.slider("Rango de horas", 0, 23, (0, 23))
+hour_start, hour_end = st.sidebar.slider(
+    "Rango de horas", 0, 23, (0, 23)
+)
 
 st.sidebar.header("📊 Métrica del mapa")
 
@@ -146,7 +154,9 @@ if metric == "Probabilidad de excedencia":
     poe = st.sidebar.slider("POE (%)", 5, 95, 20, step=5)
 
 st.sidebar.header("⚙️ Calidad")
-show_low_coverage = st.sidebar.checkbox("Mostrar nodos con baja cobertura", value=False)
+show_low_coverage = st.sidebar.checkbox(
+    "Mostrar nodos con baja cobertura", value=False
+)
 
 # ============================================================
 # FILTRADO BASE
@@ -253,7 +263,9 @@ st.subheader("📈 Serie temporal")
 nodos = sorted(df_filt["nodo"].unique())
 nodo_sel = st.selectbox("Nodo", nodos)
 
-resolucion = st.selectbox("Resolución", ["Horaria", "Diaria", "Mensual", "Anual"])
+resolucion = st.selectbox(
+    "Resolución", ["Horaria", "Diaria", "Mensual", "Anual"]
+)
 
 df_node = df_filt[df_filt["nodo"] == nodo_sel]
 
