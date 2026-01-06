@@ -4,6 +4,7 @@ import pydeck as pdk
 import numpy as np
 import altair as alt
 from pathlib import Path
+import datetime as dt
 
 # ============================================================
 # CONFIG
@@ -68,13 +69,30 @@ def robust_volatility(x):
     return np.percentile(x, 90) - np.percentile(x, 10)
 
 # ============================================================
-# Sidebar filtros (UI SIEMPRE ARRANCA)
+# Estado inicial
+# ============================================================
+if "data_loaded" not in st.session_state:
+    st.session_state.data_loaded = False
+
+# ============================================================
+# SIDEBAR – FILTROS (DEFAULT: TODO 2025)
 # ============================================================
 st.sidebar.header("⏱️ Filtros de tiempo")
 
-# Si no hay datos, ponemos defaults “seguros”
-today = pd.Timestamp.utcnow().date()
-date_start, date_end = st.sidebar.date_input("Rango de fechas", value=(today, today))
+default_start = dt.date(2025, 1, 1)
+default_end = dt.date(2025, 12, 31)
+
+# Si ya se cargaron datos antes, ajustamos a rango real disponible
+if st.session_state.get("data_loaded") and "prices_range" in st.session_state:
+    data_min, data_max = st.session_state["prices_range"]  # fechas (date)
+    default_start = max(default_start, data_min)
+    default_end = min(default_end, data_max)
+
+date_start, date_end = st.sidebar.date_input(
+    "Rango de fechas",
+    value=(default_start, default_end),
+)
+
 hour_start, hour_end = st.sidebar.slider("Rango de horas", 0, 23, (0, 23))
 
 st.sidebar.header("📊 Métrica del mapa")
@@ -90,95 +108,108 @@ if metric == "Probabilidad de excedencia":
 st.sidebar.header("⚙️ Calidad")
 show_low_coverage = st.sidebar.checkbox("Mostrar nodos con baja cobertura (≥90% NaN)", value=False)
 
-# BOTÓN CLAVE: evita cargar en el arranque (healthz no “clickea”)
+# Botón para cargar datos (evita cargar el parquet grande en el arranque)
 st.sidebar.divider()
 load_now = st.sidebar.button("📥 Cargar datos", type="primary")
 
-# Estado para no recargar cada rerun
-if "data_loaded" not in st.session_state:
-    st.session_state.data_loaded = False
-
 # ============================================================
-# Loaders (NO se ejecutan hasta que el usuario lo pida)
+# Loaders (no se ejecutan hasta que el usuario presione el botón)
 # ============================================================
 @st.cache_data(ttl=300)
 def load_nodes_and_quality():
     missing = [p for p in [QUALITY_PATH, NODES_PATH] if not p.exists()]
     if missing:
         return None, missing
+
     quality = pd.read_parquet(QUALITY_PATH)
     nodes = pd.read_csv(NODES_PATH)
+
+    # Normalización básica
+    quality["nodo"] = quality["nodo"].astype(str).str.strip().str.upper()
+    nodes["nodo"] = nodes["nodo"].astype(str).str.strip().str.upper()
+
     nodes["lat"] = pd.to_numeric(nodes["lat"], errors="coerce")
     nodes["lon"] = pd.to_numeric(nodes["lon"], errors="coerce")
+
     return (quality, nodes), None
 
 @st.cache_data(ttl=300)
 def load_prices_filtered(date_start_, date_end_, hour_start_, hour_end_):
-    # Si falta parquet grande, no rompemos la app
     if not PRICES_PATH.exists():
         return None, [PRICES_PATH]
 
-    # Convertimos a timestamps para filtros
     start_ts = pd.Timestamp(date_start_)
     end_ts = pd.Timestamp(date_end_) + pd.Timedelta(days=1)  # inclusivo por fecha
 
-    # Intento con predicate pushdown (pyarrow via pandas)
-    # Nota: filtros por hour los hacemos después para no complicar engines
+    # Lee solo columnas necesarias + filtro por datetime (pushdown)
     df = pd.read_parquet(
         PRICES_PATH,
         columns=["datetime", "nodo", "precio"],
         filters=[("datetime", ">=", start_ts), ("datetime", "<", end_ts)],
     )
+
     df["datetime"] = pd.to_datetime(df["datetime"])
     df["date"] = df["datetime"].dt.date
     df["hour"] = df["datetime"].dt.hour
+    df["nodo"] = df["nodo"].astype(str).str.strip().str.upper()
 
     df = df[(df["hour"] >= hour_start_) & (df["hour"] <= hour_end_)]
     return df, None
 
 # ============================================================
-# Si no presiona cargar, mostramos instrucciones (arranque sano)
+# Si no ha presionado cargar, mostramos instrucciones (app arranca siempre)
 # ============================================================
 if not load_now and not st.session_state.data_loaded:
     st.info(
-        "La app arrancó sin cargar el parquet grande para evitar crashes en Streamlit Cloud.\n\n"
+        "La app está lista. Para evitar crashes en Streamlit Cloud, no cargamos el parquet grande al inicio.\n\n"
         "1) Ve a **Actualizar Datos** y corre el pipeline (si aún no lo hiciste)\n"
         "2) Regresa aquí y presiona **📥 Cargar datos**"
     )
     st.stop()
 
-# Marcamos que el usuario quiere datos (permite reruns sin tocar el botón)
 st.session_state.data_loaded = True
 
 # ============================================================
-# Cargar calidad/nodos
+# Cargar nodos/calidad
 # ============================================================
 (qn, missing_qn) = load_nodes_and_quality()
 if qn is None:
     st.error("❌ Faltan archivos base (calidad/nodos).")
-    st.code("\n".join(str(p) for p in missing_qn))
+    st.code("\n".join(str(p) for p in missing_qn), language="text")
     st.stop()
 
 quality, nodes = qn
 
+# ============================================================
 # Cargar precios filtrados
+# ============================================================
 with st.spinner("Cargando datos filtrados..."):
     prices, missing_prices = load_prices_filtered(date_start, date_end, hour_start, hour_end)
 
 if prices is None:
     st.warning("⚠️ No existe el parquet procesado aún.")
-    st.code("\n".join(str(p) for p in missing_prices))
+    st.code("\n".join(str(p) for p in missing_prices), language="text")
     st.info("Ve a **Actualizar Datos** y ejecuta el pipeline.")
     st.stop()
 
+# Guardar rango real (para defaults al re-render)
+st.session_state["prices_range"] = (prices["date"].min(), prices["date"].max())
+
+# ============================================================
 # Merge final
+# ============================================================
 df = (
     prices
     .merge(quality, on="nodo", how="left")
     .merge(nodes, on="nodo", how="left")
 )
 
-# Limpieza mínima
+# flags opcionales si existen
+if "is_dead" in df.columns:
+    df = df[df["is_dead"] != True]
+if (not show_low_coverage) and ("is_low_coverage" in df.columns):
+    df = df[df["is_low_coverage"] != True]
+
 df = df.dropna(subset=["precio", "lat", "lon"])
 
 if df.empty:
@@ -188,12 +219,6 @@ if df.empty:
 # ============================================================
 # Stats por nodo
 # ============================================================
-# flags opcionales si existen en tu parquet de calidad
-if "is_dead" in df.columns:
-    df = df[df["is_dead"] != True]
-if (not show_low_coverage) and ("is_low_coverage" in df.columns):
-    df = df[df["is_low_coverage"] != True]
-
 df_stats = (
     df.groupby("nodo")
       .agg(
@@ -208,7 +233,7 @@ df_stats = (
 )
 
 # ============================================================
-# Map metric
+# DATA PARA MAPA
 # ============================================================
 if metric == "Promedio":
     df_map = df_stats.rename(columns={"precio_promedio": "valor"})
@@ -226,6 +251,9 @@ else:
 df_map = df_map.merge(nodes[["nodo", "lat", "lon"]].drop_duplicates(), on="nodo", how="left")
 df_map = df_map.dropna(subset=["valor", "lat", "lon"])
 
+# ============================================================
+# ESCALADO VISUAL
+# ============================================================
 v_min, v_max = df_map["valor"].min(), df_map["valor"].max()
 df_map["norm"] = (df_map["valor"] - v_min) / (v_max - v_min) if v_max != v_min else 0.0
 df_map["radius"] = 4000 + df_map["norm"] * 16000
@@ -279,6 +307,7 @@ df_table = (
       .round(2)
       .sort_values("Promedio", ascending=False)
 )
+
 st.dataframe(df_table, use_container_width=True)
 
 # ============================================================
@@ -288,8 +317,10 @@ st.subheader("📈 Serie temporal por nodo")
 
 nodos_list = sorted(df["nodo"].unique())
 col1, col2 = st.columns([2, 1])
+
 with col1:
     nodo_1 = st.selectbox("Nodo principal", nodos_list)
+
 with col2:
     comparar = st.checkbox("Comparar con otro nodo")
 
@@ -310,6 +341,7 @@ def aggregate(df_node):
     )
 
 series = []
+
 df1 = aggregate(df[df["nodo"] == nodo_1].copy())
 df1["Nodo"] = nodo_1
 series.append(df1)
