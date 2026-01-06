@@ -5,6 +5,17 @@ import numpy as np
 import altair as alt
 from pathlib import Path
 
+# ============================================================
+# CONFIGURACIÓN GENERAL (DEBE SER LO PRIMERO QUE LLAME A STREAMLIT)
+# ============================================================
+st.set_page_config(
+    page_title="Precios Nodales Honduras",
+    layout="wide",
+)
+
+# ============================================================
+# AUTH
+# ============================================================
 def check_password():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
@@ -14,10 +25,7 @@ def check_password():
 
     st.title("🔐 Acceso restringido")
 
-    password = st.text_input(
-        "Ingrese contraseña",
-        type="password"
-    )
+    password = st.text_input("Ingrese contraseña", type="password")
 
     if password:
         if password == st.secrets["APP_PASSWORD"]:
@@ -32,28 +40,29 @@ def check_password():
 if not check_password():
     st.stop()
 
-
-# ============================================================
-# CONFIGURACIÓN GENERAL
-# ============================================================
-st.set_page_config(
-    page_title="Precios Nodales Honduras",
-    layout="wide",
-)
-
 st.title("📍 Precios Nodales – Análisis Espacial y Temporal")
 
 ROOT = Path(__file__).resolve().parent
+PROCESSED_DIR = ROOT / "data_processed"
+STATIC_DIR = ROOT / "data_static"
+
+PRICES_PATH = PROCESSED_DIR / "precios_nodales_clean.parquet"
+QUALITY_PATH = PROCESSED_DIR / "node_quality.parquet"
+NODES_PATH = STATIC_DIR / "nodes_real.csv"
 
 # ============================================================
 # CARGA DE DATOS
 # ============================================================
-@st.cache_data
+@st.cache_data(ttl=300)  # 5 min; si corres pipeline, igual limpias cache desde la otra página
 def load_data():
-    prices = pd.read_parquet(ROOT / "data_processed" / "precios_nodales_clean.parquet")
-    quality = pd.read_parquet(ROOT / "data_processed" / "node_quality.parquet")
-    nodes = pd.read_csv(ROOT / "data_static" / "nodes_real.csv")
+    missing = [p for p in [PRICES_PATH, QUALITY_PATH, NODES_PATH] if not p.exists()]
+    if missing:
+        msg = "Faltan archivos necesarios:\n\n" + "\n".join([f"- {p}" for p in missing])
+        raise FileNotFoundError(msg)
 
+    prices = pd.read_parquet(PRICES_PATH)
+    quality = pd.read_parquet(QUALITY_PATH)
+    nodes = pd.read_csv(NODES_PATH)
 
     df = (
         prices
@@ -70,7 +79,13 @@ def load_data():
     return df
 
 
-df = load_data()
+try:
+    df = load_data()
+except FileNotFoundError as e:
+    st.error("❌ No se pudieron cargar los datos necesarios para la visualización.")
+    st.code(str(e), language="text")
+    st.info("Ve a **Actualizar Datos** y ejecuta el pipeline. Asegúrate de que `data_static/nodes_real.csv` esté en el repo.")
+    st.stop()
 
 # ============================================================
 # FUNCIONES ROBUSTAS
@@ -202,7 +217,11 @@ df_map = df_map.merge(
 # ESCALADO VISUAL
 # ============================================================
 v_min, v_max = df_map["valor"].min(), df_map["valor"].max()
-df_map["norm"] = (df_map["valor"] - v_min) / (v_max - v_min) if v_max != v_min else 0
+if v_max != v_min:
+    df_map["norm"] = (df_map["valor"] - v_min) / (v_max - v_min)
+else:
+    df_map["norm"] = 0.0
+
 df_map["radius"] = 4000 + df_map["norm"] * 16000
 df_map["color_r"] = (255 * df_map["norm"]).astype(int)
 df_map["color_g"] = 60
@@ -232,13 +251,12 @@ st.pydeck_chart(
             bearing=0,
             pitch=0,
         ),
-
         tooltip={
-            "html": f"""
-                <b>{{nodo}}</b><br/>
-                {metric_label}: <b>{{valor:.2f}}</b><br/>
-                Cobertura NaN: {{cobertura_nan:.1f}} %
-            """
+            "html": (
+                "<b>{nodo}</b><br/>"
+                f"{metric_label}: <b>{{valor}}</b><br/>"
+                "Cobertura NaN: {cobertura_nan} %"
+            )
         },
     )
 )
@@ -281,17 +299,10 @@ with col2:
 
 nodo_2 = None
 if comparar:
-    nodo_2 = st.selectbox(
-        "Nodo de comparación",
-        [n for n in nodos if n != nodo_1]
-    )
+    nodo_2 = st.selectbox("Nodo de comparación", [n for n in nodos if n != nodo_1])
 
-resolucion = st.selectbox(
-    "Resolución temporal",
-    ["Horaria", "Diaria", "Mensual", "Anual"]
-)
+resolucion = st.selectbox("Resolución temporal", ["Horaria", "Diaria", "Mensual", "Anual"])
 
-# -------- resumen nodo principal ----------
 row = df_stats[df_stats["nodo"] == nodo_1].iloc[0]
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 c1.metric("Promedio", f"{row.precio_promedio:.2f}")
@@ -301,7 +312,6 @@ c4.metric(f"POE {poe}%", f"{row.precio_poe:.2f}")
 c5.metric("Volatilidad", f"{row.volatilidad:.2f}")
 c6.metric("NaN (%)", f"{row.cobertura_nan:.1f}")
 
-# -------- agregación ----------
 def aggregate(df_node):
     if resolucion == "Horaria":
         return df_node[["datetime", "precio"]]
@@ -325,7 +335,7 @@ if comparar and nodo_2:
     df2["Nodo"] = nodo_2
     series.append(df2)
 
-df_plot = pd.concat(series)
+df_plot = pd.concat(series, ignore_index=True)
 
 chart = (
     alt.Chart(df_plot)
@@ -334,7 +344,7 @@ chart = (
         x="datetime:T",
         y=alt.Y("precio:Q", title="Precio [USD/MWh]"),
         color=alt.Color("Nodo:N", legend=alt.Legend(title="Nodo")),
-        tooltip=["datetime:T", "Nodo:N", "precio:Q"]
+        tooltip=["datetime:T", "Nodo:N", "precio:Q"],
     )
     .properties(height=400)
 )
