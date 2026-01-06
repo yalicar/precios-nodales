@@ -6,7 +6,7 @@ import altair as alt
 from pathlib import Path
 
 # ============================================================
-# CONFIGURACIÓN GENERAL (DEBE SER LO PRIMERO QUE LLAME A STREAMLIT)
+# CONFIGURACIÓN GENERAL (DEBE SER LO PRIMERO)
 # ============================================================
 st.set_page_config(
     page_title="Precios Nodales Honduras",
@@ -24,7 +24,6 @@ def check_password():
         return True
 
     st.title("🔐 Acceso restringido")
-
     password = st.text_input("Ingrese contraseña", type="password")
 
     if password:
@@ -42,6 +41,9 @@ if not check_password():
 
 st.title("📍 Precios Nodales – Análisis Espacial y Temporal")
 
+# ============================================================
+# PATHS
+# ============================================================
 ROOT = Path(__file__).resolve().parent
 PROCESSED_DIR = ROOT / "data_processed"
 STATIC_DIR = ROOT / "data_static"
@@ -51,14 +53,13 @@ QUALITY_PATH = PROCESSED_DIR / "node_quality.parquet"
 NODES_PATH = STATIC_DIR / "nodes_real.csv"
 
 # ============================================================
-# CARGA DE DATOS
+# CARGA DE DATOS (SEGURA PARA CLOUD)
 # ============================================================
-@st.cache_data(ttl=300)  # 5 min; si corres pipeline, igual limpias cache desde la otra página
+@st.cache_data(ttl=300)
 def load_data():
     missing = [p for p in [PRICES_PATH, QUALITY_PATH, NODES_PATH] if not p.exists()]
     if missing:
-        msg = "Faltan archivos necesarios:\n\n" + "\n".join([f"- {p}" for p in missing])
-        raise FileNotFoundError(msg)
+        return None, missing
 
     prices = pd.read_parquet(PRICES_PATH)
     quality = pd.read_parquet(QUALITY_PATH)
@@ -76,15 +77,23 @@ def load_data():
     df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
     df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
 
-    return df
+    return df, None
 
 
-try:
-    df = load_data()
-except FileNotFoundError as e:
-    st.error("❌ No se pudieron cargar los datos necesarios para la visualización.")
-    st.code(str(e), language="text")
-    st.info("Ve a **Actualizar Datos** y ejecuta el pipeline. Asegúrate de que `data_static/nodes_real.csv` esté en el repo.")
+df, missing = load_data()
+
+if df is None:
+    st.warning("⚠️ Datos aún no generados")
+    st.markdown("""
+    Esta aplicación necesita que el pipeline se ejecute al menos una vez.
+
+    **Pasos:**
+    1. Ve a **Actualizar Datos**
+    2. Sube el archivo Excel
+    3. Ejecuta el pipeline
+
+    Luego regresa a esta vista.
+    """)
     st.stop()
 
 # ============================================================
@@ -100,7 +109,6 @@ def robust_exceedance_price(x, poe):
 
 
 def robust_volatility(x):
-    """Volatilidad robusta = P90 - P10"""
     x = x.dropna()
     if len(x) < 10:
         return np.nan
@@ -119,10 +127,7 @@ date_start, date_end = st.sidebar.date_input(
     value=(min_date, max_date),
 )
 
-hour_start, hour_end = st.sidebar.slider(
-    "Rango de horas",
-    0, 23, (0, 23)
-)
+hour_start, hour_end = st.sidebar.slider("Rango de horas", 0, 23, (0, 23))
 
 st.sidebar.header("📊 Métrica del mapa")
 
@@ -138,20 +143,10 @@ metric = st.sidebar.radio(
 
 poe = 20
 if metric == "Probabilidad de excedencia":
-    poe = st.sidebar.slider(
-        "POE – Probabilidad de excedencia (%)",
-        5, 95, 20, step=5
-    )
-    st.sidebar.caption(
-        "POE bajo → precios altos raros | POE alto → precios bajos frecuentes"
-    )
+    poe = st.sidebar.slider("POE (%)", 5, 95, 20, step=5)
 
 st.sidebar.header("⚙️ Calidad")
-
-show_low_coverage = st.sidebar.checkbox(
-    "Mostrar nodos con baja cobertura (≥90% NaN)",
-    value=False,
-)
+show_low_coverage = st.sidebar.checkbox("Mostrar nodos con baja cobertura", value=False)
 
 # ============================================================
 # FILTRADO BASE
@@ -175,7 +170,7 @@ if df_filt.empty:
     st.stop()
 
 # ============================================================
-# ESTADÍSTICAS BASE POR NODO
+# ESTADÍSTICAS POR NODO
 # ============================================================
 df_stats = (
     df_filt
@@ -192,20 +187,20 @@ df_stats = (
 )
 
 # ============================================================
-# DATA PARA MAPA
+# MAPA
 # ============================================================
 if metric == "Promedio":
     df_map = df_stats.rename(columns={"precio_promedio": "valor"})
-    metric_label = "Precio promedio [USD/MWh]"
+    metric_label = "Precio promedio"
 elif metric == "Máximo":
     df_map = df_stats.rename(columns={"precio_max": "valor"})
-    metric_label = "Precio máximo [USD/MWh]"
+    metric_label = "Precio máximo"
 elif metric == "Probabilidad de excedencia":
     df_map = df_stats.rename(columns={"precio_poe": "valor"})
-    metric_label = f"Precio POE {poe}% [USD/MWh]"
+    metric_label = f"Precio POE {poe}%"
 else:
     df_map = df_stats.rename(columns={"volatilidad": "valor"})
-    metric_label = "Volatilidad (P90 − P10) [USD/MWh]"
+    metric_label = "Volatilidad (P90 − P10)"
 
 df_map = df_map.merge(
     df[["nodo", "lat", "lon"]].drop_duplicates(),
@@ -213,23 +208,14 @@ df_map = df_map.merge(
     how="left"
 ).dropna(subset=["valor", "lat", "lon"])
 
-# ============================================================
-# ESCALADO VISUAL
-# ============================================================
 v_min, v_max = df_map["valor"].min(), df_map["valor"].max()
-if v_max != v_min:
-    df_map["norm"] = (df_map["valor"] - v_min) / (v_max - v_min)
-else:
-    df_map["norm"] = 0.0
+df_map["norm"] = (df_map["valor"] - v_min) / (v_max - v_min) if v_max != v_min else 0
 
 df_map["radius"] = 4000 + df_map["norm"] * 16000
 df_map["color_r"] = (255 * df_map["norm"]).astype(int)
 df_map["color_g"] = 60
 df_map["color_b"] = (255 * (1 - df_map["norm"])).astype(int)
 
-# ============================================================
-# MAPA
-# ============================================================
 st.subheader(f"🗺️ {metric_label}")
 
 st.pydeck_chart(
@@ -246,77 +232,34 @@ st.pydeck_chart(
         ],
         initial_view_state=pdk.ViewState(
             latitude=14.85,
-            longitude=-86.60,
+            longitude=-86.6,
             zoom=6,
-            bearing=0,
-            pitch=0,
         ),
-        tooltip={
-            "html": (
-                "<b>{nodo}</b><br/>"
-                f"{metric_label}: <b>{{valor}}</b><br/>"
-                "Cobertura NaN: {cobertura_nan} %"
-            )
-        },
+        tooltip={"html": "<b>{nodo}</b><br/>Valor: {valor}"},
     )
 )
 
 # ============================================================
-# TABLA ANALÍTICA
+# TABLA
 # ============================================================
 st.subheader("📋 Resumen por nodo")
-
-df_table = (
-    df_stats
-    .rename(columns={
-        "precio_promedio": "Promedio",
-        "precio_min": "Mínimo",
-        "precio_max": "Máximo",
-        "precio_poe": f"Precio POE {poe}%",
-        "volatilidad": "Volatilidad (P90−P10)",
-        "cobertura_nan": "Cobertura NaN (%)",
-    })
-    .round(2)
-    .sort_values("Promedio", ascending=False)
-)
-
-st.dataframe(df_table, use_container_width=True)
+st.dataframe(df_stats.round(2), use_container_width=True)
 
 # ============================================================
-# SERIE TEMPORAL (CON COMPARACIÓN)
+# SERIE TEMPORAL
 # ============================================================
-st.subheader("📈 Serie temporal por nodo")
+st.subheader("📈 Serie temporal")
 
 nodos = sorted(df_filt["nodo"].unique())
+nodo_sel = st.selectbox("Nodo", nodos)
 
-col1, col2 = st.columns([2, 1])
+resolucion = st.selectbox("Resolución", ["Horaria", "Diaria", "Mensual", "Anual"])
 
-with col1:
-    nodo_1 = st.selectbox("Nodo principal", nodos)
+df_node = df_filt[df_filt["nodo"] == nodo_sel]
 
-with col2:
-    comparar = st.checkbox("Comparar con otro nodo")
-
-nodo_2 = None
-if comparar:
-    nodo_2 = st.selectbox("Nodo de comparación", [n for n in nodos if n != nodo_1])
-
-resolucion = st.selectbox("Resolución temporal", ["Horaria", "Diaria", "Mensual", "Anual"])
-
-row = df_stats[df_stats["nodo"] == nodo_1].iloc[0]
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric("Promedio", f"{row.precio_promedio:.2f}")
-c2.metric("Mínimo", f"{row.precio_min:.2f}")
-c3.metric("Máximo", f"{row.precio_max:.2f}")
-c4.metric(f"POE {poe}%", f"{row.precio_poe:.2f}")
-c5.metric("Volatilidad", f"{row.volatilidad:.2f}")
-c6.metric("NaN (%)", f"{row.cobertura_nan:.1f}")
-
-def aggregate(df_node):
-    if resolucion == "Horaria":
-        return df_node[["datetime", "precio"]]
+if resolucion != "Horaria":
     rule = {"Diaria": "D", "Mensual": "M", "Anual": "Y"}[resolucion]
-    return (
+    df_node = (
         df_node
         .set_index("datetime")
         .resample(rule)["precio"]
@@ -324,27 +267,13 @@ def aggregate(df_node):
         .reset_index()
     )
 
-series = []
-
-df1 = aggregate(df_filt[df_filt["nodo"] == nodo_1])
-df1["Nodo"] = nodo_1
-series.append(df1)
-
-if comparar and nodo_2:
-    df2 = aggregate(df_filt[df_filt["nodo"] == nodo_2])
-    df2["Nodo"] = nodo_2
-    series.append(df2)
-
-df_plot = pd.concat(series, ignore_index=True)
-
 chart = (
-    alt.Chart(df_plot)
+    alt.Chart(df_node)
     .mark_line()
     .encode(
         x="datetime:T",
-        y=alt.Y("precio:Q", title="Precio [USD/MWh]"),
-        color=alt.Color("Nodo:N", legend=alt.Legend(title="Nodo")),
-        tooltip=["datetime:T", "Nodo:N", "precio:Q"],
+        y="precio:Q",
+        tooltip=["datetime:T", "precio:Q"],
     )
     .properties(height=400)
 )
