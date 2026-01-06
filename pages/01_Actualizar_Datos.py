@@ -1,6 +1,7 @@
 import streamlit as st
 import subprocess
 import json
+import sys
 from pathlib import Path
 from datetime import datetime
 from auth import check_auth
@@ -125,7 +126,7 @@ if st.button("Actualizar datos ahora"):
             run_step(
                 "ETL",
                 [
-                    "python", str(ETL),
+                    sys.executable, str(ETL),
                     "--input", str(RAW),
                     "--output", str(PROCESSED / "precios_nodales.parquet"),
                 ],
@@ -134,7 +135,7 @@ if st.button("Actualizar datos ahora"):
             run_step(
                 "Limpieza",
                 [
-                    "python", str(CLEAN),
+                    sys.executable, str(CLEAN),
                     "--input", str(PROCESSED / "precios_nodales.parquet"),
                     "--output", str(PROCESSED / "precios_nodales_clean.parquet"),
                 ],
@@ -143,7 +144,7 @@ if st.button("Actualizar datos ahora"):
             run_step(
                 "Sanity checks",
                 [
-                    "python", str(SANITY),
+                    sys.executable, str(SANITY),
                     "--input", str(PROCESSED / "precios_nodales_clean.parquet"),
                     "--output", str(PROCESSED / "precios_nodales_flags.parquet"),
                 ],
