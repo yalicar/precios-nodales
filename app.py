@@ -328,41 +328,39 @@ st.pydeck_chart(
 )
 
 # ============================================================
-# TABLA (IMPORTANTE)
-#   - SIEMPRE incluye POE 90% (precio_p90) aunque estés en Promedio
-#   - SOLO incluye el POE seleccionado (precio_poe_map) si la métrica es POE
-#   - Esto evita que te salga POE 20% cuando estás en Promedio
+# TABLA
+#   - SIEMPRE muestra POE 90% (precio_p90) fijo
+#   - NUNCA muestra el POE variable del mapa (precio_poe_map)
 # ============================================================
 st.subheader("📋 Resumen por nodo")
 
-base_cols = ["nodo", "precio_promedio", "precio_min", "precio_max", "cobertura_nan", "precio_p90", "volatilidad"]
+df_table = df_stats[[
+    "nodo",
+    "precio_promedio",
+    "precio_min",
+    "precio_max",
+    "cobertura_nan",
+    "precio_p90",
+    "volatilidad",
+]].copy()
 
-# si estás en POE, agregamos también la columna del POE seleccionado
-if metric == "Probabilidad de excedencia":
-    cols = ["nodo", "precio_promedio", "precio_min", "precio_max", "cobertura_nan", "precio_p90", "precio_poe_map", "volatilidad"]
-else:
-    cols = base_cols
-
-df_table = df_stats[cols].copy()
-
-rename_map = {
+df_table = df_table.rename(columns={
     "precio_promedio": "Promedio",
     "precio_min": "Mínimo",
     "precio_max": "Máximo",
     "cobertura_nan": "Cobertura NaN (%)",
-    "precio_p90": f"Precio POE {poe_table}%",
-    "precio_poe_map": f"Precio POE {poe_map}%",
+    "precio_p90": f"Precio POE {poe_table}%",   # <- siempre 90
     "volatilidad": "Volatilidad (P90−P10)",
-}
+})
 
 df_table = (
     df_table
-      .rename(columns=rename_map)
-      .round(2)
-      .sort_values("Promedio", ascending=False)
+    .round(2)
+    .sort_values("Promedio", ascending=False)
 )
 
 st.dataframe(df_table, use_container_width=True)
+
 
 # ============================================================
 # SERIE TEMPORAL (1 o 2 nodos)
