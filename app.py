@@ -11,6 +11,10 @@ import datetime as dt
 # ============================================================
 st.set_page_config(page_title="Precios Nodales Honduras", layout="wide")
 
+# 👇 Cambiá este string cuando quieras verificar despliegue en Streamlit Cloud
+VERSION = "poe90-blindado-2026-01-08"
+st.sidebar.caption(f"Version: {VERSION}")
+
 ROOT = Path(__file__).resolve().parent
 PROCESSED_DIR = ROOT / "data_processed"
 STATIC_DIR = ROOT / "data_static"
@@ -88,8 +92,9 @@ st.sidebar.header("⏱️ Filtros de tiempo")
 default_start = dt.date(2025, 1, 1)
 default_end = dt.date(2025, 12, 31)
 
+# Si ya se cargaron datos antes, ajustamos a rango real disponible
 if st.session_state.get("data_loaded") and "prices_range" in st.session_state:
-    data_min, data_max = st.session_state["prices_range"]
+    data_min, data_max = st.session_state["prices_range"]  # fechas (date)
     default_start = max(default_start, data_min)
     default_end = min(default_end, data_max)
 
@@ -265,7 +270,7 @@ df_stats = (
 
 # ============================================================
 # DATA PARA MAPA
-#  - POE del MAPA se calcula APARTE, así la TABLA jamás puede mostrar POE 20
+#  - POE del MAPA se calcula APARTE (para evitar contaminar tabla)
 # ============================================================
 if metric == "Promedio":
     df_map = df_stats[["nodo", "precio_promedio"]].rename(columns={"precio_promedio": "valor"})
