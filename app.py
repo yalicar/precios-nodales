@@ -97,7 +97,6 @@ hour_start, hour_end = st.sidebar.slider("Rango de horas", 0, 23, (0, 23))
 
 st.sidebar.header("📊 Métrica del mapa")
 
-# --- Mantener / detectar cambios de métrica (para resetear POE al entrar)
 metric = st.sidebar.radio(
     "Selecciona métrica",
     ["Promedio", "Máximo", "Probabilidad de excedencia", "Volatilidad (P90 − P10)"],
@@ -107,7 +106,7 @@ metric = st.sidebar.radio(
 # POE (P90 por defecto, incluso en tabla)
 # ============================================================
 POE_DEFAULT = 90
-POE_STATE_VERSION = 1  # sube este número si querés forzar reset otra vez en el futuro
+POE_STATE_VERSION = 2  # <- SUBIDO A 2 para forzar reset (antes estaba en 1)
 
 # 0) Reset por versión (sirve si antes quedó guardado en 20)
 if st.session_state.get("poe_state_version") != POE_STATE_VERSION:
