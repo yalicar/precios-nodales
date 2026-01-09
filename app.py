@@ -75,6 +75,12 @@ if "data_loaded" not in st.session_state:
     st.session_state.data_loaded = False
 
 # ============================================================
+# CONSTANTES POE
+# ============================================================
+POE_DEFAULT = 90          # P90 fijo por defecto
+poe_table = POE_DEFAULT   # <- TABLA SIEMPRE POE 90
+
+# ============================================================
 # SIDEBAR – FILTROS (DEFAULT: TODO 2025)
 # ============================================================
 st.sidebar.header("⏱️ Filtros de tiempo")
@@ -97,17 +103,10 @@ hour_start, hour_end = st.sidebar.slider("Rango de horas", 0, 23, (0, 23))
 
 st.sidebar.header("📊 Métrica del mapa")
 
-# ============================================================
-# POE (tabla SIEMPRE P90, mapa POE configurable solo en esa métrica)
-# ============================================================
-POE_DEFAULT = 90          # P90 fijo por defecto
-poe_table = POE_DEFAULT   # <- la tabla siempre será POE 90%
-
-# Guardar valor del slider solo para la métrica POE del mapa
+# Guardar valor del slider solo para POE del mapa
 if "poe_slider" not in st.session_state:
     st.session_state.poe_slider = POE_DEFAULT
 
-# Métrica con key (para poder resetear si queremos)
 metric = st.sidebar.radio(
     "Selecciona métrica",
     ["Promedio", "Máximo", "Probabilidad de excedencia", "Volatilidad (P90 − P10)"],
@@ -115,16 +114,17 @@ metric = st.sidebar.radio(
 )
 metric = st.session_state.metric_choice
 
-# Track de cambios de métrica
+# Track cambios de métrica
 if "metric_prev" not in st.session_state:
     st.session_state.metric_prev = metric
 
 if metric != st.session_state.metric_prev:
+    # cuando entrás a POE, forzamos slider a 90
     if metric == "Probabilidad de excedencia":
         st.session_state.poe_slider = POE_DEFAULT
     st.session_state.metric_prev = metric
 
-# poe_map: el que usa el MAPA cuando la métrica es POE
+# poe_map: solo aplica al MAPA cuando la métrica es POE
 poe_map = POE_DEFAULT
 if metric == "Probabilidad de excedencia":
     poe_map = st.sidebar.slider(
@@ -137,22 +137,23 @@ if metric == "Probabilidad de excedencia":
     poe_map = int(poe_map)
 
 st.sidebar.header("⚙️ Calidad")
-show_low_coverage = st.sidebar.checkbox("Mostrar nodos con baja cobertura (≥90% NaN)", value=False)
+show_low_coverage = st.sidebar.checkbox(
+    "Mostrar nodos con baja cobertura (≥90% NaN)", value=False
+)
 
 # ============================================================
-# Botón para cargar datos (resetea POE a 90 al cargar)
+# Botón cargar datos (resetea el POE del slider a 90 al cargar)
 # ============================================================
 st.sidebar.divider()
 
 def on_load_click():
     st.session_state.data_loaded = True
-    st.session_state.poe_slider = POE_DEFAULT  # <- fuerza 90 al cargar SIEMPRE
-    st.session_state.metric_prev = st.session_state.metric_choice
+    st.session_state.poe_slider = POE_DEFAULT  # <- SIEMPRE vuelve a 90 al cargar
 
 load_now = st.sidebar.button("📥 Cargar datos", type="primary", on_click=on_load_click)
 
 # ============================================================
-# Loaders (no se ejecutan hasta que el usuario presione el botón)
+# Loaders (no se ejecutan hasta presionar el botón)
 # ============================================================
 @st.cache_data(ttl=300)
 def load_nodes_and_quality():
@@ -194,7 +195,7 @@ def load_prices_filtered(date_start_, date_end_, hour_start_, hour_end_):
     return df, None
 
 # ============================================================
-# Si no ha presionado cargar, mostramos instrucciones (app arranca siempre)
+# Si no ha presionado cargar, mostramos instrucciones
 # ============================================================
 if not load_now and not st.session_state.data_loaded:
     st.info(
@@ -240,6 +241,7 @@ df = (
 
 if "is_dead" in df.columns:
     df = df[df["is_dead"] != True]
+
 if (not show_low_coverage) and ("is_low_coverage" in df.columns):
     df = df[df["is_low_coverage"] != True]
 
@@ -251,8 +253,8 @@ if df.empty:
 
 # ============================================================
 # Stats por nodo
-#   - precio_p90 SIEMPRE (para tabla)
-#   - precio_poe_map (para mapa cuando la métrica sea POE)
+#   - precio_p90 SIEMPRE para TABLA
+#   - precio_poe_map para MAPA (solo se mostrará en tabla si métrica=POE)
 # ============================================================
 df_stats = (
     df.groupby("nodo")
@@ -326,26 +328,35 @@ st.pydeck_chart(
 )
 
 # ============================================================
-# TABLA
-#   - SIEMPRE muestra POE 90% (P90) fijo
-#   - Si estás en métrica POE, también muestra el POE seleccionado
+# TABLA (IMPORTANTE)
+#   - SIEMPRE incluye POE 90% (precio_p90) aunque estés en Promedio
+#   - SOLO incluye el POE seleccionado (precio_poe_map) si la métrica es POE
+#   - Esto evita que te salga POE 20% cuando estás en Promedio
 # ============================================================
 st.subheader("📋 Resumen por nodo")
+
+base_cols = ["nodo", "precio_promedio", "precio_min", "precio_max", "cobertura_nan", "precio_p90", "volatilidad"]
+
+# si estás en POE, agregamos también la columna del POE seleccionado
+if metric == "Probabilidad de excedencia":
+    cols = ["nodo", "precio_promedio", "precio_min", "precio_max", "cobertura_nan", "precio_p90", "precio_poe_map", "volatilidad"]
+else:
+    cols = base_cols
+
+df_table = df_stats[cols].copy()
 
 rename_map = {
     "precio_promedio": "Promedio",
     "precio_min": "Mínimo",
     "precio_max": "Máximo",
-    "precio_p90": f"Precio POE {poe_table}%",
-    "volatilidad": "Volatilidad (P90−P10)",
     "cobertura_nan": "Cobertura NaN (%)",
+    "precio_p90": f"Precio POE {poe_table}%",
+    "precio_poe_map": f"Precio POE {poe_map}%",
+    "volatilidad": "Volatilidad (P90−P10)",
 }
 
-if metric == "Probabilidad de excedencia":
-    rename_map["precio_poe_map"] = f"Precio POE {poe_map}%"
-
 df_table = (
-    df_stats
+    df_table
       .rename(columns=rename_map)
       .round(2)
       .sort_values("Promedio", ascending=False)
@@ -391,8 +402,8 @@ series.append(df1)
 
 if comparar and nodo_2:
     df2 = aggregate(df[df["nodo"] == nodo_2].copy())
-df2["Nodo"] = nodo_2
-series.append(df2)
+    df2["Nodo"] = nodo_2
+    series.append(df2)
 
 df_plot = pd.concat(series, ignore_index=True)
 
