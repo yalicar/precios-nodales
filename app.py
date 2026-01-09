@@ -11,8 +11,7 @@ import datetime as dt
 # ============================================================
 st.set_page_config(page_title="Precios Nodales Honduras", layout="wide")
 
-# 👇 Cambiá este string cuando quieras verificar despliegue en Streamlit Cloud
-VERSION = "poe90-blindado-2026-01-08"
+VERSION = "poe90-tabla_fijo-poe_map_variable-2026-01-08"
 st.sidebar.caption(f"Version: {VERSION}")
 
 ROOT = Path(__file__).resolve().parent
@@ -81,7 +80,7 @@ if "data_loaded" not in st.session_state:
 # ============================================================
 # POE CONSTANTES
 # ============================================================
-POE_DEFAULT = 90          # P90 fijo
+POE_DEFAULT = 90          # default del slider y tabla
 poe_table = POE_DEFAULT   # <- TABLA SIEMPRE 90
 
 # ============================================================
@@ -92,9 +91,8 @@ st.sidebar.header("⏱️ Filtros de tiempo")
 default_start = dt.date(2025, 1, 1)
 default_end = dt.date(2025, 12, 31)
 
-# Si ya se cargaron datos antes, ajustamos a rango real disponible
 if st.session_state.get("data_loaded") and "prices_range" in st.session_state:
-    data_min, data_max = st.session_state["prices_range"]  # fechas (date)
+    data_min, data_max = st.session_state["prices_range"]
     default_start = max(default_start, data_min)
     default_end = min(default_end, data_max)
 
@@ -107,7 +105,7 @@ hour_start, hour_end = st.sidebar.slider("Rango de horas", 0, 23, (0, 23))
 
 st.sidebar.header("📊 Métrica del mapa")
 
-# Guardar valor del slider solo para POE del mapa
+# Session state del slider POE (solo inicializa una vez)
 if "poe_slider" not in st.session_state:
     st.session_state.poe_slider = POE_DEFAULT
 
@@ -118,22 +116,13 @@ metric = st.sidebar.radio(
 )
 metric = st.session_state.metric_choice
 
-# Track de cambios: si entra a POE, resetea slider a 90
-if "metric_prev" not in st.session_state:
-    st.session_state.metric_prev = metric
-
-if metric != st.session_state.metric_prev:
-    if metric == "Probabilidad de excedencia":
-        st.session_state.poe_slider = POE_DEFAULT
-    st.session_state.metric_prev = metric
-
 # poe_map: solo usa slider cuando estás en métrica POE
 poe_map = POE_DEFAULT
 if metric == "Probabilidad de excedencia":
     poe_map = st.sidebar.slider(
         "POE (%)",
         5, 95,
-        value=int(st.session_state.get("poe_slider", POE_DEFAULT)),
+        value=int(st.session_state.poe_slider),
         step=5,
         key="poe_slider",
     )
@@ -143,18 +132,17 @@ st.sidebar.header("⚙️ Calidad")
 show_low_coverage = st.sidebar.checkbox("Mostrar nodos con baja cobertura (≥90% NaN)", value=False)
 
 # ============================================================
-# Botón cargar datos (resetea el POE del slider a 90 al cargar)
+# Botón cargar datos (NO resetea slider)
 # ============================================================
 st.sidebar.divider()
 
 def on_load_click():
     st.session_state.data_loaded = True
-    st.session_state.poe_slider = POE_DEFAULT  # <- al cargar SIEMPRE vuelve a 90
 
 load_now = st.sidebar.button("📥 Cargar datos", type="primary", on_click=on_load_click)
 
 # ============================================================
-# Loaders (no se ejecutan hasta presionar el botón)
+# Loaders
 # ============================================================
 @st.cache_data(ttl=300)
 def load_nodes_and_quality():
@@ -269,8 +257,7 @@ df_stats = (
 )
 
 # ============================================================
-# DATA PARA MAPA
-#  - POE del MAPA se calcula APARTE (para evitar contaminar tabla)
+# DATA PARA MAPA (POE variable funciona aquí)
 # ============================================================
 if metric == "Promedio":
     df_map = df_stats[["nodo", "precio_promedio"]].rename(columns={"precio_promedio": "valor"})
