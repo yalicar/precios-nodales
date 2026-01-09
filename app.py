@@ -96,14 +96,40 @@ date_start, date_end = st.sidebar.date_input(
 hour_start, hour_end = st.sidebar.slider("Rango de horas", 0, 23, (0, 23))
 
 st.sidebar.header("📊 Métrica del mapa")
+
+# --- Mantener / detectar cambios de métrica (para resetear POE al entrar)
 metric = st.sidebar.radio(
     "Selecciona métrica",
     ["Promedio", "Máximo", "Probabilidad de excedencia", "Volatilidad (P90 − P10)"],
 )
 
-poe = 90
+# ============================================================
+# POE (P90 por defecto, incluso en tabla)
+# ============================================================
+# 1) Estado inicial: si nunca existió, arranca en 90
+if "poe_slider" not in st.session_state:
+    st.session_state.poe_slider = 90
+
+# 2) Detectar cambio de métrica y, si entramos a POE, forzar 90
+if "metric_prev" not in st.session_state:
+    st.session_state.metric_prev = metric
+
+if metric != st.session_state.metric_prev:
+    if metric == "Probabilidad de excedencia":
+        st.session_state.poe_slider = 90
+    st.session_state.metric_prev = metric
+
+# 3) poe SIEMPRE toma el valor actual (así la tabla siempre muestra P90 por defecto)
+poe = int(st.session_state.poe_slider)
+
+# 4) Slider solo aparece cuando eliges esa métrica, pero arranca en 90 correctamente
 if metric == "Probabilidad de excedencia":
-    poe = st.sidebar.slider("POE (%)", 5, 20, 90, step=5)
+    st.session_state.poe_slider = st.sidebar.slider(
+        "POE (%)",
+        5, 95,
+        step=5,
+        key="poe_slider",
+    )
 
 st.sidebar.header("⚙️ Calidad")
 show_low_coverage = st.sidebar.checkbox("Mostrar nodos con baja cobertura (≥90% NaN)", value=False)
@@ -300,7 +326,7 @@ df_table = (
           "precio_promedio": "Promedio",
           "precio_min": "Mínimo",
           "precio_max": "Máximo",
-          "precio_poe": f"Precio POE {poe}%",
+          "precio_poe": f"Precio POE {poe}%",  # <- aquí queda por defecto en POE 90%
           "volatilidad": "Volatilidad (P90−P10)",
           "cobertura_nan": "Cobertura NaN (%)",
       })
