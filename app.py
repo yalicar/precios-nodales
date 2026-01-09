@@ -103,7 +103,7 @@ metric = st.sidebar.radio(
 
 poe = 20
 if metric == "Probabilidad de excedencia":
-    poe = st.sidebar.slider("POE (%)", 5, 95, 20, step=5)
+    poe = st.sidebar.slider("POE (%)", 5, 20, 90, step=5)
 
 st.sidebar.header("⚙️ Calidad")
 show_low_coverage = st.sidebar.checkbox("Mostrar nodos con baja cobertura (≥90% NaN)", value=False)
