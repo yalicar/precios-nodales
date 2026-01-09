@@ -101,7 +101,7 @@ metric = st.sidebar.radio(
     ["Promedio", "Máximo", "Probabilidad de excedencia", "Volatilidad (P90 − P10)"],
 )
 
-poe = 20
+poe = 90
 if metric == "Probabilidad de excedencia":
     poe = st.sidebar.slider("POE (%)", 5, 20, 90, step=5)
 
