@@ -75,10 +75,10 @@ if "data_loaded" not in st.session_state:
     st.session_state.data_loaded = False
 
 # ============================================================
-# CONSTANTES POE
+# POE CONSTANTES
 # ============================================================
-POE_DEFAULT = 90          # P90 fijo por defecto
-poe_table = POE_DEFAULT   # <- TABLA SIEMPRE POE 90
+POE_DEFAULT = 90          # P90 fijo
+poe_table = POE_DEFAULT   # <- TABLA SIEMPRE 90
 
 # ============================================================
 # SIDEBAR – FILTROS (DEFAULT: TODO 2025)
@@ -88,9 +88,8 @@ st.sidebar.header("⏱️ Filtros de tiempo")
 default_start = dt.date(2025, 1, 1)
 default_end = dt.date(2025, 12, 31)
 
-# Si ya se cargaron datos antes, ajustamos a rango real disponible
 if st.session_state.get("data_loaded") and "prices_range" in st.session_state:
-    data_min, data_max = st.session_state["prices_range"]  # fechas (date)
+    data_min, data_max = st.session_state["prices_range"]
     default_start = max(default_start, data_min)
     default_end = min(default_end, data_max)
 
@@ -114,17 +113,16 @@ metric = st.sidebar.radio(
 )
 metric = st.session_state.metric_choice
 
-# Track cambios de métrica
+# Track de cambios: si entra a POE, resetea slider a 90
 if "metric_prev" not in st.session_state:
     st.session_state.metric_prev = metric
 
 if metric != st.session_state.metric_prev:
-    # cuando entrás a POE, forzamos slider a 90
     if metric == "Probabilidad de excedencia":
         st.session_state.poe_slider = POE_DEFAULT
     st.session_state.metric_prev = metric
 
-# poe_map: solo aplica al MAPA cuando la métrica es POE
+# poe_map: solo usa slider cuando estás en métrica POE
 poe_map = POE_DEFAULT
 if metric == "Probabilidad de excedencia":
     poe_map = st.sidebar.slider(
@@ -137,9 +135,7 @@ if metric == "Probabilidad de excedencia":
     poe_map = int(poe_map)
 
 st.sidebar.header("⚙️ Calidad")
-show_low_coverage = st.sidebar.checkbox(
-    "Mostrar nodos con baja cobertura (≥90% NaN)", value=False
-)
+show_low_coverage = st.sidebar.checkbox("Mostrar nodos con baja cobertura (≥90% NaN)", value=False)
 
 # ============================================================
 # Botón cargar datos (resetea el POE del slider a 90 al cargar)
@@ -148,7 +144,7 @@ st.sidebar.divider()
 
 def on_load_click():
     st.session_state.data_loaded = True
-    st.session_state.poe_slider = POE_DEFAULT  # <- SIEMPRE vuelve a 90 al cargar
+    st.session_state.poe_slider = POE_DEFAULT  # <- al cargar SIEMPRE vuelve a 90
 
 load_now = st.sidebar.button("📥 Cargar datos", type="primary", on_click=on_load_click)
 
@@ -241,7 +237,6 @@ df = (
 
 if "is_dead" in df.columns:
     df = df[df["is_dead"] != True]
-
 if (not show_low_coverage) and ("is_low_coverage" in df.columns):
     df = df[df["is_low_coverage"] != True]
 
@@ -253,8 +248,7 @@ if df.empty:
 
 # ============================================================
 # Stats por nodo
-#   - precio_p90 SIEMPRE para TABLA
-#   - precio_poe_map para MAPA (solo se mostrará en tabla si métrica=POE)
+#  - TABLA: SOLO P90 fijo (NO existe precio_poe_map aquí)
 # ============================================================
 df_stats = (
     df.groupby("nodo")
@@ -263,8 +257,7 @@ df_stats = (
           precio_min=("precio", "min"),
           precio_max=("precio", "max"),
           cobertura_nan=("nan_pct", "mean") if "nan_pct" in df.columns else ("precio", "size"),
-          precio_p90=("precio", lambda x: robust_exceedance_price(x, poe_table)),
-          precio_poe_map=("precio", lambda x: robust_exceedance_price(x, poe_map)),
+          precio_p90=("precio", lambda x: robust_exceedance_price(x, poe_table)),  # <- SIEMPRE 90
           volatilidad=("precio", robust_volatility),
       )
       .reset_index()
@@ -272,18 +265,26 @@ df_stats = (
 
 # ============================================================
 # DATA PARA MAPA
+#  - POE del MAPA se calcula APARTE, así la TABLA jamás puede mostrar POE 20
 # ============================================================
 if metric == "Promedio":
-    df_map = df_stats.rename(columns={"precio_promedio": "valor"})
+    df_map = df_stats[["nodo", "precio_promedio"]].rename(columns={"precio_promedio": "valor"})
     metric_label = "Precio promedio [USD/MWh]"
+
 elif metric == "Máximo":
-    df_map = df_stats.rename(columns={"precio_max": "valor"})
+    df_map = df_stats[["nodo", "precio_max"]].rename(columns={"precio_max": "valor"})
     metric_label = "Precio máximo [USD/MWh]"
+
 elif metric == "Probabilidad de excedencia":
-    df_map = df_stats.rename(columns={"precio_poe_map": "valor"})
+    df_map = (
+        df.groupby("nodo")["precio"]
+          .apply(lambda x: robust_exceedance_price(x, poe_map))
+          .reset_index(name="valor")
+    )
     metric_label = f"Precio POE {poe_map}% [USD/MWh]"
+
 else:
-    df_map = df_stats.rename(columns={"volatilidad": "valor"})
+    df_map = df_stats[["nodo", "volatilidad"]].rename(columns={"volatilidad": "valor"})
     metric_label = "Volatilidad (P90 − P10) [USD/MWh]"
 
 df_map = df_map.merge(nodes[["nodo", "lat", "lon"]].drop_duplicates(), on="nodo", how="left")
@@ -328,9 +329,7 @@ st.pydeck_chart(
 )
 
 # ============================================================
-# TABLA
-#   - SIEMPRE muestra POE 90% (precio_p90) fijo
-#   - NUNCA muestra el POE variable del mapa (precio_poe_map)
+# TABLA (SIEMPRE POE 90)
 # ============================================================
 st.subheader("📋 Resumen por nodo")
 
@@ -344,23 +343,20 @@ df_table = df_stats[[
     "volatilidad",
 ]].copy()
 
-df_table = df_table.rename(columns={
-    "precio_promedio": "Promedio",
-    "precio_min": "Mínimo",
-    "precio_max": "Máximo",
-    "cobertura_nan": "Cobertura NaN (%)",
-    "precio_p90": f"Precio POE {poe_table}%",   # <- siempre 90
-    "volatilidad": "Volatilidad (P90−P10)",
-})
-
 df_table = (
-    df_table
+    df_table.rename(columns={
+        "precio_promedio": "Promedio",
+        "precio_min": "Mínimo",
+        "precio_max": "Máximo",
+        "cobertura_nan": "Cobertura NaN (%)",
+        "precio_p90": f"Precio POE {poe_table}%",   # <- 90 SIEMPRE
+        "volatilidad": "Volatilidad (P90−P10)",
+    })
     .round(2)
     .sort_values("Promedio", ascending=False)
 )
 
 st.dataframe(df_table, use_container_width=True)
-
 
 # ============================================================
 # SERIE TEMPORAL (1 o 2 nodos)
