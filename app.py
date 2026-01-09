@@ -103,40 +103,21 @@ metric = st.sidebar.radio(
 )
 
 # ============================================================
-# POE (P90 por defecto, incluso en tabla)
+# POE (por defecto 90 cuando NO estás en "Probabilidad de excedencia")
 # ============================================================
 POE_DEFAULT = 90
-POE_STATE_VERSION = 2  # <- SUBIDO A 2 para forzar reset (antes estaba en 1)
 
-# 0) Reset por versión (sirve si antes quedó guardado en 20)
-if st.session_state.get("poe_state_version") != POE_STATE_VERSION:
-    st.session_state.poe_slider = POE_DEFAULT
-    st.session_state.poe_state_version = POE_STATE_VERSION
+poe = POE_DEFAULT
 
-# 1) Estado inicial: si nunca existió, arranca en 90
-if "poe_slider" not in st.session_state:
-    st.session_state.poe_slider = POE_DEFAULT
-
-# 2) Detectar cambio de métrica y, si entramos a POE, forzar 90
-if "metric_prev" not in st.session_state:
-    st.session_state.metric_prev = metric
-
-if metric != st.session_state.metric_prev:
-    if metric == "Probabilidad de excedencia":
-        st.session_state.poe_slider = POE_DEFAULT
-    st.session_state.metric_prev = metric
-
-# 4) Slider solo aparece cuando eliges esa métrica, pero arranca en 90 correctamente
 if metric == "Probabilidad de excedencia":
-    st.session_state.poe_slider = st.sidebar.slider(
+    poe = st.sidebar.slider(
         "POE (%)",
         5, 95,
+        value=int(st.session_state.get("poe_slider", POE_DEFAULT)),
         step=5,
         key="poe_slider",
     )
-
-# 3) poe SIEMPRE toma el valor actual (IMPORTANTE: después del slider)
-poe = int(st.session_state.poe_slider)
+    poe = int(poe)
 
 st.sidebar.header("⚙️ Calidad")
 show_low_coverage = st.sidebar.checkbox("Mostrar nodos con baja cobertura (≥90% NaN)", value=False)
