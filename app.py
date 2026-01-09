@@ -11,7 +11,7 @@ import datetime as dt
 # ============================================================
 st.set_page_config(page_title="Precios Nodales Honduras", layout="wide")
 
-VERSION = "poe90-tabla_fijo-poe_map_variable-2026-01-08"
+VERSION = "poe-tabla-90-o-variable-2026-01-08"
 st.sidebar.caption(f"Version: {VERSION}")
 
 ROOT = Path(__file__).resolve().parent
@@ -80,8 +80,8 @@ if "data_loaded" not in st.session_state:
 # ============================================================
 # POE CONSTANTES
 # ============================================================
-POE_DEFAULT = 90          # default del slider y tabla
-poe_table = POE_DEFAULT   # <- TABLA SIEMPRE 90
+POE_DEFAULT = 90          # default inicial del slider y tabla
+poe_table = POE_DEFAULT   # <- TABLA en modos NO-POE: siempre 90
 
 # ============================================================
 # SIDEBAR – FILTROS (DEFAULT: TODO 2025)
@@ -105,7 +105,7 @@ hour_start, hour_end = st.sidebar.slider("Rango de horas", 0, 23, (0, 23))
 
 st.sidebar.header("📊 Métrica del mapa")
 
-# Session state del slider POE (solo inicializa una vez)
+# Session state del slider POE
 if "poe_slider" not in st.session_state:
     st.session_state.poe_slider = POE_DEFAULT
 
@@ -241,7 +241,7 @@ if df.empty:
 
 # ============================================================
 # Stats por nodo
-#  - TABLA: SOLO P90 fijo (NO existe precio_poe_map aquí)
+#  - precio_p90 (POE 90 fijo) siempre disponible
 # ============================================================
 df_stats = (
     df.groupby("nodo")
@@ -250,11 +250,20 @@ df_stats = (
           precio_min=("precio", "min"),
           precio_max=("precio", "max"),
           cobertura_nan=("nan_pct", "mean") if "nan_pct" in df.columns else ("precio", "size"),
-          precio_p90=("precio", lambda x: robust_exceedance_price(x, poe_table)),  # <- SIEMPRE 90
+          precio_p90=("precio", lambda x: robust_exceedance_price(x, poe_table)),  # <- 90 fijo
           volatilidad=("precio", robust_volatility),
       )
       .reset_index()
 )
+
+# Si estás en POE, calculamos también el POE seleccionado (solo para tabla en ese modo)
+if metric == "Probabilidad de excedencia":
+    df_poe_sel = (
+        df.groupby("nodo")["precio"]
+          .apply(lambda x: robust_exceedance_price(x, poe_map))
+          .reset_index(name="precio_poe_sel")
+    )
+    df_stats = df_stats.merge(df_poe_sel, on="nodo", how="left")
 
 # ============================================================
 # DATA PARA MAPA (POE variable funciona aquí)
@@ -268,11 +277,7 @@ elif metric == "Máximo":
     metric_label = "Precio máximo [USD/MWh]"
 
 elif metric == "Probabilidad de excedencia":
-    df_map = (
-        df.groupby("nodo")["precio"]
-          .apply(lambda x: robust_exceedance_price(x, poe_map))
-          .reset_index(name="valor")
-    )
+    df_map = df_stats[["nodo", "precio_poe_sel"]].rename(columns={"precio_poe_sel": "valor"})
     metric_label = f"Precio POE {poe_map}% [USD/MWh]"
 
 else:
@@ -321,29 +326,54 @@ st.pydeck_chart(
 )
 
 # ============================================================
-# TABLA (SIEMPRE POE 90)
+# TABLA
+#  - Promedio/Máximo/Volatilidad: POE 90 fijo
+#  - Probabilidad de excedencia: POE variable (slider)
 # ============================================================
 st.subheader("📋 Resumen por nodo")
 
-df_table = df_stats[[
-    "nodo",
-    "precio_promedio",
-    "precio_min",
-    "precio_max",
-    "cobertura_nan",
-    "precio_p90",
-    "volatilidad",
-]].copy()
+if metric == "Probabilidad de excedencia":
+    df_table = df_stats[[
+        "nodo",
+        "precio_promedio",
+        "precio_min",
+        "precio_max",
+        "cobertura_nan",
+        "precio_poe_sel",
+        "volatilidad",
+    ]].copy()
 
-df_table = (
-    df_table.rename(columns={
+    df_table = df_table.rename(columns={
         "precio_promedio": "Promedio",
         "precio_min": "Mínimo",
         "precio_max": "Máximo",
         "cobertura_nan": "Cobertura NaN (%)",
-        "precio_p90": f"Precio POE {poe_table}%",   # <- 90 SIEMPRE
+        "precio_poe_sel": f"Precio POE {poe_map}%",
         "volatilidad": "Volatilidad (P90−P10)",
     })
+
+else:
+    df_table = df_stats[[
+        "nodo",
+        "precio_promedio",
+        "precio_min",
+        "precio_max",
+        "cobertura_nan",
+        "precio_p90",
+        "volatilidad",
+    ]].copy()
+
+    df_table = df_table.rename(columns={
+        "precio_promedio": "Promedio",
+        "precio_min": "Mínimo",
+        "precio_max": "Máximo",
+        "cobertura_nan": "Cobertura NaN (%)",
+        "precio_p90": f"Precio POE {poe_table}%",
+        "volatilidad": "Volatilidad (P90−P10)",
+    })
+
+df_table = (
+    df_table
     .round(2)
     .sort_values("Promedio", ascending=False)
 )
