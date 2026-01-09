@@ -106,9 +106,17 @@ metric = st.sidebar.radio(
 # ============================================================
 # POE (P90 por defecto, incluso en tabla)
 # ============================================================
+POE_DEFAULT = 90
+POE_STATE_VERSION = 1  # sube este número si querés forzar reset otra vez en el futuro
+
+# 0) Reset por versión (sirve si antes quedó guardado en 20)
+if st.session_state.get("poe_state_version") != POE_STATE_VERSION:
+    st.session_state.poe_slider = POE_DEFAULT
+    st.session_state.poe_state_version = POE_STATE_VERSION
+
 # 1) Estado inicial: si nunca existió, arranca en 90
 if "poe_slider" not in st.session_state:
-    st.session_state.poe_slider = 90
+    st.session_state.poe_slider = POE_DEFAULT
 
 # 2) Detectar cambio de métrica y, si entramos a POE, forzar 90
 if "metric_prev" not in st.session_state:
@@ -116,11 +124,8 @@ if "metric_prev" not in st.session_state:
 
 if metric != st.session_state.metric_prev:
     if metric == "Probabilidad de excedencia":
-        st.session_state.poe_slider = 90
+        st.session_state.poe_slider = POE_DEFAULT
     st.session_state.metric_prev = metric
-
-# 3) poe SIEMPRE toma el valor actual (así la tabla siempre muestra P90 por defecto)
-poe = int(st.session_state.poe_slider)
 
 # 4) Slider solo aparece cuando eliges esa métrica, pero arranca en 90 correctamente
 if metric == "Probabilidad de excedencia":
@@ -130,6 +135,9 @@ if metric == "Probabilidad de excedencia":
         step=5,
         key="poe_slider",
     )
+
+# 3) poe SIEMPRE toma el valor actual (IMPORTANTE: después del slider)
+poe = int(st.session_state.poe_slider)
 
 st.sidebar.header("⚙️ Calidad")
 show_low_coverage = st.sidebar.checkbox("Mostrar nodos con baja cobertura (≥90% NaN)", value=False)
@@ -326,7 +334,7 @@ df_table = (
           "precio_promedio": "Promedio",
           "precio_min": "Mínimo",
           "precio_max": "Máximo",
-          "precio_poe": f"Precio POE {poe}%",  # <- aquí queda por defecto en POE 90%
+          "precio_poe": f"Precio POE {poe}%",
           "volatilidad": "Volatilidad (P90−P10)",
           "cobertura_nan": "Cobertura NaN (%)",
       })
