@@ -97,22 +97,25 @@ hour_start, hour_end = st.sidebar.slider("Rango de horas", 0, 23, (0, 23))
 
 st.sidebar.header("📊 Métrica del mapa")
 
-metric = st.sidebar.radio(
-    "Selecciona métrica",
-    ["Promedio", "Máximo", "Probabilidad de excedencia", "Volatilidad (P90 − P10)"],
-)
-
 # ============================================================
 # POE (tabla SIEMPRE P90, mapa POE configurable solo en esa métrica)
 # ============================================================
-POE_DEFAULT = 90          # P90 fijo para la tabla
+POE_DEFAULT = 90          # P90 fijo por defecto
 poe_table = POE_DEFAULT   # <- la tabla siempre será POE 90%
 
 # Guardar valor del slider solo para la métrica POE del mapa
 if "poe_slider" not in st.session_state:
     st.session_state.poe_slider = POE_DEFAULT
 
-# Si entrás a la métrica POE, resetea a 90 por defecto al entrar
+# Métrica con key (para poder resetear si queremos)
+metric = st.sidebar.radio(
+    "Selecciona métrica",
+    ["Promedio", "Máximo", "Probabilidad de excedencia", "Volatilidad (P90 − P10)"],
+    key="metric_choice",
+)
+metric = st.session_state.metric_choice
+
+# Track de cambios de métrica
 if "metric_prev" not in st.session_state:
     st.session_state.metric_prev = metric
 
@@ -136,9 +139,17 @@ if metric == "Probabilidad de excedencia":
 st.sidebar.header("⚙️ Calidad")
 show_low_coverage = st.sidebar.checkbox("Mostrar nodos con baja cobertura (≥90% NaN)", value=False)
 
-# Botón para cargar datos (evita cargar el parquet grande en el arranque)
+# ============================================================
+# Botón para cargar datos (resetea POE a 90 al cargar)
+# ============================================================
 st.sidebar.divider()
-load_now = st.sidebar.button("📥 Cargar datos", type="primary")
+
+def on_load_click():
+    st.session_state.data_loaded = True
+    st.session_state.poe_slider = POE_DEFAULT  # <- fuerza 90 al cargar SIEMPRE
+    st.session_state.metric_prev = st.session_state.metric_choice
+
+load_now = st.sidebar.button("📥 Cargar datos", type="primary", on_click=on_load_click)
 
 # ============================================================
 # Loaders (no se ejecutan hasta que el usuario presione el botón)
@@ -192,8 +203,6 @@ if not load_now and not st.session_state.data_loaded:
         "2) Regresa aquí y presiona **📥 Cargar datos**"
     )
     st.stop()
-
-st.session_state.data_loaded = True
 
 # ============================================================
 # Cargar nodos/calidad
@@ -382,8 +391,8 @@ series.append(df1)
 
 if comparar and nodo_2:
     df2 = aggregate(df[df["nodo"] == nodo_2].copy())
-    df2["Nodo"] = nodo_2
-    series.append(df2)
+df2["Nodo"] = nodo_2
+series.append(df2)
 
 df_plot = pd.concat(series, ignore_index=True)
 
